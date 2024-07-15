@@ -3,7 +3,7 @@
 ![VRChat SDK3 Compatible](https://img.shields.io/badge/VRChat%20SDK3-Compatible-brightgreen)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-SunCycle is a dynamic day/night cycle system for VRChat worlds, built with UdonSharp. It allows players to interact with a lever to control the time of day with a lever, as well as a being a decent time cycle script for a directional light.
+SunCycle is a dynamic day/night cycle system for VRChat worlds, built with UdonSharp. It allows players to interact with a lever to control the time of day with a lever, as well as being a decent time cycle script for a directional light.
 
 ![SunCycle Demo](Example.gif)
 
