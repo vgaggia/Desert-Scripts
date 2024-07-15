@@ -55,8 +55,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- Thanks to the VRChat and UdonSharp communities for their invaluable resources and support.
-- Lever model created by [Artist Name] (if applicable).
+- Thanks to VRChat and UdonSharp for their invaluable resources and support.
 
 ## Support
 
