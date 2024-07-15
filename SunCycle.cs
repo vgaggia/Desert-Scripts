@@ -1,82 +1,208 @@
-﻿using UdonSharp;
+﻿/*
+HOW TO USE THIS SCRIPT:
+
+1. Attach this script to the lever object in your scene.
+
+2. In the Unity Inspector, assign the following:
+   - Sun Light: The directional light representing the sun in your scene.
+   - Cycle Length: Duration of a full day/night cycle in seconds.
+   - Sun Intensity: Maximum intensity of the sun light.
+   - Time Slider (optional): UI Slider to display/control the time of day.
+   - Lever Audio Source: AudioSource component for lever sound.
+   - Lever Sound: AudioClip to play when interacting with the lever.
+   - Rotation Speed: Speed multiplier for lever rotation.
+   - Toggle Objects: List of GameObjects to toggle on and off when interacting.
+
+3. Lever Setup:
+   - Ensure the lever object has a Collider component for interaction.
+
+4. Ensure the GameObject with this script has UdonBehaviour component.
+
+This script will create a day/night cycle with the following features:
+- Automatic sun movement and color/intensity changes.
+- Manual time control by interacting with and rotating the lever.
+- Use mode to start/stop interaction.
+- Time moves backwards at -45 degrees and forwards at +45 degrees.
+- Audio feedback when interacting with the lever.
+- Ability to toggle other objects on/off when interacting.
+- Network synchronization for multiplayer VRChat worlds.
+*/
+
+using UdonSharp;
 using UnityEngine;
 using UnityEngine.UI;
 using VRC.SDKBase;
-using VRC.Udon.Common.Interfaces;
+using VRC.Udon;
 
 [UdonBehaviourSyncMode(BehaviourSyncMode.Manual)]
 public class SunCycle : UdonSharpBehaviour
 {
-    public Light sunLight; // Assign the sun Light component in the inspector
-    public float cycleLength = 120f; // Length of the day/night cycle in seconds
+    public Light sunLight;
+    public float cycleLength = 120f;
     public float sunIntensity = 1f;
-    public Slider timeSlider; // Assign the UI Slider component in the inspector
-    
+    public Slider timeSlider;
+    public AudioSource leverAudioSource;
+    public AudioClip leverSound;
+    public float rotationSpeed = 1f;
+
+    [Tooltip("List of objects to toggle on and off")]
+    public GameObject[] toggleObjects;
+
     [UdonSynced] private float _syncedTimeElapsed = 0f;
     private float _localTimeElapsed = 0f;
-    private bool _isTimeLocked = false;
+    private bool _isInteracting = false;
+    private Vector3 _lastInteractPosition;
+    private float _leverAngle = 0f;
 
-    private void Start()
+    void Start()
     {
-        // Ensure the sun light is set to directional
-        sunLight.type = LightType.Directional;
+        if (sunLight != null)
+        {
+            sunLight.type = LightType.Directional;
+        }
     }
 
     public override void Interact()
     {
-        _isTimeLocked = !_isTimeLocked;
-        timeSlider.interactable = _isTimeLocked;
+        ToggleInteraction();
+    }
+
+    private void ToggleInteraction()
+    {
+        _isInteracting = !_isInteracting;
+
+        if (_isInteracting)
+        {
+            StartInteraction();
+        }
+        else
+        {
+            StopInteraction();
+        }
+    }
+
+    private void StartInteraction()
+    {
+        _lastInteractPosition = GetPlayerInteractPosition();
+
+        if (leverAudioSource != null && leverSound != null)
+        {
+            leverAudioSource.clip = leverSound;
+            leverAudioSource.Play();
+        }
+
+        foreach (GameObject toggleObject in toggleObjects)
+        {
+            if (toggleObject != null)
+            {
+                toggleObject.SetActive(!toggleObject.activeSelf);
+            }
+        }
+
+        if (!Networking.IsOwner(gameObject))
+        {
+            Networking.SetOwner(Networking.LocalPlayer, gameObject);
+        }
+    }
+
+    private void StopInteraction()
+    {
+        if (leverAudioSource != null)
+        {
+            leverAudioSource.Stop();
+        }
     }
 
     private void Update()
     {
-        if (Networking.IsOwner(gameObject))
+        if (_isInteracting && Networking.IsOwner(gameObject))
         {
-            if (!_isTimeLocked)
-            {
-                _localTimeElapsed += Time.deltaTime;
-                _syncedTimeElapsed = _localTimeElapsed;
-                RequestSerialization();
-            }
-            else
-            {
-                _syncedTimeElapsed = timeSlider.value * cycleLength;
-                RequestSerialization();
-            }
+            UpdateLeverRotation();
         }
 
-        // Normalize the time elapsed to the cycle length
+        if (Networking.IsOwner(gameObject))
+        {
+            UpdateTime();
+            RequestSerialization();
+        }
+
+        UpdateSunPosition();
+
+        if (timeSlider != null)
+        {
+            timeSlider.value = _syncedTimeElapsed / cycleLength;
+        }
+    }
+
+    private void UpdateLeverRotation()
+    {
+        Vector3 currentInteractPosition = GetPlayerInteractPosition();
+        float delta = (currentInteractPosition - _lastInteractPosition).x * rotationSpeed;
+        
+        _leverAngle = Mathf.Clamp(_leverAngle + delta, -45f, 45f);
+        transform.localRotation = Quaternion.Euler(0f, _leverAngle, 0f);
+
+        _lastInteractPosition = currentInteractPosition;
+    }
+
+    private void UpdateTime()
+    {
+        float timeDirection = Mathf.Sign(_leverAngle);
+        float timeSpeed = Mathf.Abs(_leverAngle) / 45f; // Normalized speed based on lever angle
+        
+        _localTimeElapsed += Time.deltaTime * timeDirection * timeSpeed;
+        
+        if (_localTimeElapsed < 0)
+        {
+            _localTimeElapsed += cycleLength;
+        }
+        else if (_localTimeElapsed >= cycleLength)
+        {
+            _localTimeElapsed -= cycleLength;
+        }
+        
+        _syncedTimeElapsed = _localTimeElapsed;
+    }
+
+    private Vector3 GetPlayerInteractPosition()
+    {
+        VRCPlayerApi localPlayer = Networking.LocalPlayer;
+        if (localPlayer == null) return Vector3.zero;
+
+        if (localPlayer.IsUserInVR())
+        {
+            return localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.RightHand).position;
+        }
+        else
+        {
+            VRCPlayerApi.TrackingData headData = localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head);
+            return headData.position + headData.rotation * Vector3.forward;
+        }
+    }
+
+    private void UpdateSunPosition()
+    {
+        if (sunLight == null) return;
+
         float timeOfDay = _syncedTimeElapsed / cycleLength;
-
-        // Calculate the sun's rotation based on the time of day
         float sunAngle = Mathf.Lerp(40f, 400f, timeOfDay) % 360f;
-        Quaternion sunRotation = Quaternion.Euler(sunAngle, 0f, 0f);
+        sunLight.transform.rotation = Quaternion.Euler(sunAngle, 0f, 0f);
 
-        // Adjust the sun light rotation
-        sunLight.transform.rotation = sunRotation;
-
-        // Adjust the sun light intensity based on the sun's angle
         float intensityMultiplier = Mathf.Clamp01(Mathf.Cos((sunAngle - 90f) * Mathf.Deg2Rad));
         sunLight.intensity = sunIntensity * intensityMultiplier;
 
-        // Transition through different color stages for the sun light
         if (sunAngle >= 0f && sunAngle < 180f)
         {
-            // Daytime (0 <= sunAngle < 180)
             sunLight.color = Color.white;
         }
         else
         {
-            // Nighttime (180 <= sunAngle < 360)
             sunLight.color = Color.Lerp(Color.white, new Color(0.6f, 0.6f, 1f), (sunAngle - 180f) / 180f);
         }
+    }
 
-        // Check if the cycle needs to be reset
-        if (_localTimeElapsed >= cycleLength && Networking.IsOwner(gameObject) && !_isTimeLocked)
-        {
-            _localTimeElapsed = 0f;
-            _syncedTimeElapsed = 0f;
-            RequestSerialization();
-        }
+    public override void OnDeserialization()
+    {
+        _localTimeElapsed = _syncedTimeElapsed;
     }
 }
